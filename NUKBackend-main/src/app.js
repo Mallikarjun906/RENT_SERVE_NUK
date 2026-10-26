@@ -1,3 +1,4 @@
+
 const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
@@ -6,16 +7,21 @@ const { notFound, errorHandler } = require("./middleware/errorMiddleware");
 
 const app = express();
 
-// Render proxy configuration.
-// Verify that one trusted proxy hop matches your deployment topology.
+// Render proxy configuration
 app.set("trust proxy", 1);
 app.disable("x-powered-by");
 
 app.use(helmet());
 
-const normalizeOrigin = (origin) => origin.trim().replace(/\/+$/, "");
+// Normalize origins by removing trailing slashes
+const normalizeOrigin = (origin) =>
+  origin.trim().replace(/\/+$/, "");
 
 const allowedOrigins = [
+  // Your deployed Vercel frontend
+  "https://nukrentserve.vercel.app",
+
+  // Local development
   "http://127.0.0.1:5500",
   "http://localhost:5500",
   "http://127.0.0.1:5501",
@@ -30,6 +36,8 @@ const allowedOrigins = [
   "http://localhost:5173",
   "http://127.0.0.1:5174",
   "http://localhost:5174",
+
+  // Optional additional origins from Render environment variables
   ...(process.env.CLIENT_ORIGIN || "")
     .split(",")
     .map(normalizeOrigin)
@@ -39,6 +47,7 @@ const allowedOrigins = [
 app.use(
   cors({
     origin(origin, callback) {
+      // Requests without an Origin header are allowed.
       if (!origin || allowedOrigins.includes(normalizeOrigin(origin))) {
         return callback(null, true);
       }
@@ -69,9 +78,11 @@ app.use(
 app.get("/health", (req, res) =>
   res.json({ success: true, message: "NUK RentServe API is running." })
 );
+
 app.get("/api/health", (req, res) =>
   res.json({ success: true, message: "NUK RentServe API is running." })
 );
+
 app.get("/api/v1/health", (req, res) =>
   res.json({ success: true, message: "NUK RentServe API is running." })
 );
