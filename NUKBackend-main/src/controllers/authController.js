@@ -38,7 +38,8 @@ function sessionUser(user) {
     name: user.name,
     email: user.email,
     role: user.role,
-    location: user.location
+    location: user.location,
+    photoUrl: user.photoUrl || ""
   };
 }
 
@@ -69,6 +70,18 @@ const register = asyncHandler(async (req, res) => {
   }
 
   const normalizedEmail = String(email).trim().toLowerCase();
+
+  const otpRecord = await EmailOtp.findOne({
+    email: normalizedEmail,
+    purpose: "customer-registration",
+    verifiedAt: { $ne: null },
+    expiresAt: { $gt: new Date() },
+    consumedAt: null
+  }).sort({ createdAt: -1 });
+
+  if (!otpRecord || !otpRecord.verificationTokenHash) {
+    throw new ApiError(400, "Please verify your email before creating an account.");
+  }
 
   if (await User.exists({ email: normalizedEmail })) {
     throw new ApiError(409, "Email is already registered.");

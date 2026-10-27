@@ -1,7 +1,229 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, clearSession, readUser, unwrapItems } from '../services/api';
-export function Dashboard(){const user=readUser();const [data,setData]=useState([]);const [propertyBookings,setPropertyBookings]=useState([]);const [transportBookings,setTransportBookings]=useState([]);const [error,setError]=useState('');const nav=useNavigate();useEffect(()=>{Promise.allSettled([api('enquiries/my'),api('bookings/mine'),api('transport-bookings/mine')]).then(results=>{if(results[0].status==='fulfilled')setData(unwrapItems(results[0].value));if(results[1].status==='fulfilled')setPropertyBookings(unwrapItems(results[1].value));if(results[2].status==='fulfilled')setTransportBookings(unwrapItems(results[2].value));const fail=results.find(r=>r.status==='rejected');if(fail)setError(fail.reason?.message||'Some account data could not be loaded.');});},[]);return <section className="wrap section"><span className="eyebrow">YOUR WORKSPACE</span><h1>Hello, {user?.name||'there'}.</h1><p className="muted">Manage your account, property requests and enquiries.</p><div className="dashboard-grid"><div className="dashboard-card"><span className="eyebrow">ACCOUNT ROLE</span><h2>{user?.role||'User'}</h2><p>Signed in as {user?.email}</p></div><div className="dashboard-card"><span className="eyebrow">ENQUIRIES</span><h2>{data.length}</h2><p>Requests linked to your account.</p><Link to="/enquiries" className="text-link">Open enquiries →</Link></div><div className="dashboard-card"><span className="eyebrow">PROPERTY BOOKINGS</span><h2>{propertyBookings.length}</h2><p>Your rental booking requests.</p><Link to="/rentals" className="text-link">Browse rentals →</Link></div></div>{error&&<div className="notice">Some account data could not be loaded: {error}</div>}<div className="section-head"><div><span className="eyebrow">TRANSPORT</span><h2>My transport requests ({transportBookings.length})</h2></div><Link to="/transport" className="btn btn-outline">Find transport</Link></div>{transportBookings.length?<div className="enquiry-list">{transportBookings.map(b=><article className="enquiry-card" key={b._id}><div><span className="eyebrow">{b.vehicleType} · {b.status}</span><h3>{b.pickup} → {b.destination}</h3><p>{new Date(b.scheduledAt).toLocaleString()}</p><small>{b.providerId?.name?`Provider: ${b.providerId.name}`:'Waiting for an approved provider'}</small></div></article>)}</div>:<div className="empty-state"><p>Your transport requests will appear here after you submit one.</p></div>}<button className="btn btn-outline" onClick={()=>{clearSession();nav('/login');}}>Sign out</button></section>}
+
+export function Dashboard() {
+  const currentUser = readUser();
+  const [user, setUser] = useState(currentUser || {});
+  const [data, setData] = useState([]);
+  const [propertyBookings, setPropertyBookings] = useState([]);
+  const [transportBookings, setTransportBookings] = useState([]);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [saving, setSaving] = useState(false);
+  const nav = useNavigate();
+
+  useEffect(() => {
+    let active = true;
+    Promise.allSettled([api('users/me'), api('enquiries/my'), api('bookings/mine'), api('transport-bookings/mine')])
+      .then((results) => {
+        if (results[0].status === 'fulfilled' && active) {
+          const nextUser = { ...(currentUser || {}), ...results[0].value };
+          sessionStorage.setItem('nuk_user', JSON.stringify(nextUser));
+          setUser(nextUser);
+        }
+        if (results[1].status === 'fulfilled' && active) setData(unwrapItems(results[1].value));
+        if (results[2].status === 'fulfilled' && active) setPropertyBookings(unwrapItems(results[2].value));
+        if (results[3].status === 'fulfilled' && active) setTransportBookings(unwrapItems(results[3].value));
+        const fail = results.find((result) => result.status === 'rejected');
+        if (fail && active) setError(fail.reason?.message || 'Some account data could not be loaded.');
+      })
+      .catch((err) => { if (active) setError(err.message); });
+    return () => { active = false; };
+  }, [currentUser]);
+
+  const handleInput = (event) => {
+    const { name, value } = event.target;
+    setUser((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handlePhotoChange = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setNotice('Please choose an image file.');
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setNotice('Please choose an image smaller than 2 MB.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => setUser((prev) => ({ ...prev, photoUrl: reader.result }));
+    reader.readAsDataURL(file);
+  };
+
+  const saveProfile = async (event) => {
+    event.preventDefault();
+    setSaving(true); setNotice('');
+    try {
+      const payload = {
+        name: String(user.name || '').trim(),
+        phone: String(user.phone || '').trim(),
+        location: String(user.location || '').trim(),
+        photoUrl: String(user.photoUrl || '').trim()
+      };
+      if (!payload.name || payload.name.length < 2) throw new Error('Full name is required.');
+      if (!payload.location || payload.location.length < 2) throw new Error('Location is required.');
+      const updated = await api('users/me', { method: 'PATCH', body: payload });
+      const nextUser = { ...(currentUser || {}), ...updated, photoUrl: updated.photoUrl || payload.photoUrl || currentUser?.photoUrl || '' };
+      sessionStorage.setItem('nuk_user', JSON.stringify(nextUser));
+      setUser(nextUser);
+      setNotice('Profile updated successfully.');
+    } catch (err) {
+      setNotice(err.message || 'Unable to save your profile.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const avatar = user?.photoUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(user?.name || 'User')}&background=B91C2C&color=fff`;
+  const totalBookings = propertyBookings.length + transportBookings.length;
+  const closedEnquiries = data.filter((item) => ['closed', 'accepted'].includes(String(item.contactStatus || '').toLowerCase())).length;
+
+  return (
+    <section className="account-shell wrap section">
+      <aside className="account-sidebar">
+        <div className="account-profile-card">
+          <img src={avatar} alt={user?.name || 'User'} className="account-avatar" />
+          <div>
+            <span className="eyebrow">CUSTOMER</span>
+            <h2>{user?.name || 'Your profile'}</h2>
+            <p>{user?.email || 'Signed in account'}</p>
+          </div>
+        </div>
+
+        <nav className="account-nav" aria-label="Account navigation">
+          <a href="#overview">Overview</a>
+          <a href="#profile">Edit profile</a>
+          <a href="#bookings">Bookings</a>
+          <a href="#support">Support</a>
+        </nav>
+
+        <button type="button" className="btn btn-outline btn-full" onClick={() => { clearSession(); nav('/login'); }}>
+          Logout
+        </button>
+      </aside>
+
+      <div className="account-main" id="overview">
+        <header className="account-header">
+          <div>
+            <span className="eyebrow">YOUR ACCOUNT</span>
+            <h1>Hello, {user?.name || 'there'}.</h1>
+          </div>
+          <Link className="btn btn-outline" to="/rentals">Browse rentals</Link>
+        </header>
+
+        {notice && <div className="notice" role="status">{notice}</div>}
+        {error && <div className="notice error">{error}</div>}
+
+        <div className="account-metric-grid">
+          <article className="account-metric-card">
+            <span className="eyebrow">MY BOOKINGS</span>
+            <strong>{totalBookings}</strong>
+            <small>Rental and transport requests</small>
+          </article>
+          <article className="account-metric-card">
+            <span className="eyebrow">SAVED RENTALS</span>
+            <strong>Browse</strong>
+            <small>Keep homes you like</small>
+          </article>
+          <article className="account-metric-card">
+            <span className="eyebrow">REVIEWS</span>
+            <strong>{closedEnquiries}</strong>
+            <small>Resolved enquiries</small>
+          </article>
+          <article className="account-metric-card">
+            <span className="eyebrow">NOTIFICATIONS</span>
+            <strong>{Math.max(0, data.length)}</strong>
+            <small>Updates in your activity</small>
+          </article>
+        </div>
+
+        <div className="account-content-grid">
+          <article className="account-panel" id="profile">
+            <div className="panel-header">
+              <div>
+                <span className="eyebrow">PROFILE</span>
+                <h2>Edit details</h2>
+              </div>
+            </div>
+
+            <form className="form-stack profile-form" onSubmit={saveProfile}>
+              <div className="profile-avatar-block">
+                <img src={avatar} alt={user?.name || 'User'} className="profile-avatar" />
+                <label className="btn btn-outline btn-small profile-photo-label">
+                  Change photo
+                  <input type="file" accept="image/*" hidden onChange={handlePhotoChange} />
+                </label>
+              </div>
+
+              <div className="field-row">
+                <label>Full name<input name="name" value={user.name || ''} onChange={handleInput} required /></label>
+                <label>Phone<input name="phone" value={user.phone || ''} onChange={handleInput} /></label>
+              </div>
+              <div className="field-row">
+                <label>Location<input name="location" value={user.location || ''} onChange={handleInput} required /></label>
+                <label>Profile photo URL<input name="photoUrl" value={user.photoUrl || ''} onChange={handleInput} placeholder="https://example.com/profile.jpg" /></label>
+              </div>
+              <div className="action-row">
+                <button className="btn" type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save profile'}</button>
+                <button className="btn btn-outline" type="button" onClick={() => { clearSession(); nav('/login'); }}>Log out</button>
+              </div>
+            </form>
+          </article>
+
+          <article className="account-panel" id="bookings">
+            <div className="panel-header">
+              <div>
+                <span className="eyebrow">BOOKING HISTORY</span>
+                <h2>Recent activity</h2>
+              </div>
+              <Link className="text-link" to="/enquiries">Open all →</Link>
+            </div>
+
+            <div className="booking-list">
+              {propertyBookings.length || transportBookings.length ? (
+                <>
+                  {propertyBookings.slice(0, 3).map((booking) => (
+                    <div className="booking-item" key={booking._id || booking.id}>
+                      <div>
+                        <span className="eyebrow">PROPERTY</span>
+                        <h3>{booking.propertyId?.title || 'Property request'}</h3>
+                      </div>
+                      <p>{booking.message || 'Property enquiry in progress.'}</p>
+                      <small>{booking.status || 'pending'} · {booking.requestedMoveInDate ? new Date(booking.requestedMoveInDate).toLocaleDateString() : 'No date set'}</small>
+                    </div>
+                  ))}
+                  {transportBookings.slice(0, 3).map((booking) => (
+                    <div className="booking-item" key={booking._id || booking.id}>
+                      <div>
+                        <span className="eyebrow">TRANSPORT</span>
+                        <h3>{booking.pickup} → {booking.destination}</h3>
+                      </div>
+                      <p>{booking.details || 'Transport booking request is active.'}</p>
+                      <small>{booking.status || 'pending'} · {booking.scheduledAt ? new Date(booking.scheduledAt).toLocaleString() : 'Schedule pending'}</small>
+                    </div>
+                  ))}
+                </>
+              ) : (
+                <div className="empty-state"><span>✦</span><h3>No bookings yet</h3><p>Your property and transport requests will show up here once submitted.</p></div>
+              )}
+            </div>
+          </article>
+        </div>
+
+        <div className="account-mini-links" id="support">
+          <Link className="btn btn-outline" to="/rentals">Saved rentals</Link>
+          <Link className="btn btn-outline" to="/enquiries">My reviews</Link>
+          <Link className="btn btn-outline" to="/contact">Privacy & security</Link>
+          <Link className="btn btn-outline" to="/contact">Help & support</Link>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function Enquiries(){const [items,setItems]=useState([]);const [error,setError]=useState('');const [loading,setLoading]=useState(true);useEffect(()=>{api('enquiries/my').then(d=>setItems(unwrapItems(d))).catch(e=>setError(e.message)).finally(()=>setLoading(false));},[]);return <section className="wrap section"><span className="eyebrow">YOUR REQUESTS</span><h1>Enquiries & work chat</h1><p className="muted">Keep messages connected to the work they belong to.</p>{loading?<p>Loading enquiries…</p>:error?<div className="notice error">{error}</div>:items.length?<div className="enquiry-list">{items.map(i=><article className="enquiry-card" key={i._id||i.id}><div><span className="eyebrow">{i.listingType||'ENQUIRY'} · {i.contactStatus||'pending'}</span><h3>{i.listingTitle||i.title||'Enquiry'}</h3><p>{i.message}</p><small>Created {i.createdAt?new Date(i.createdAt).toLocaleString():'recently'}</small></div></article>)}</div>:<div className="empty-state"><span>✉</span><h3>No enquiries yet</h3><p>When you submit a request, it will appear here.</p><Link className="btn" to="/transport">Find transport</Link></div>}</section>}
 export function Admin(){
  const [applications,setApplications]=useState([]); const [tickets,setTickets]=useState([]); const [users,setUsers]=useState([]); const [stats,setStats]=useState(null); const [loading,setLoading]=useState(true); const [error,setError]=useState(''); const [notice,setNotice]=useState(''); const [busyId,setBusyId]=useState('');

@@ -123,3 +123,146 @@ export function Detail({kind}) {
     </div>
   </section>;
 }
+
+export function Providers() {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [filters, setFilters] = useState({ q: '', city: '', category: '' });
+  const [nearbyNotice, setNearbyNotice] = useState('');
+
+  async function load() {
+    setLoading(true);
+    setError('');
+    try {
+      const query = {};
+      if (filters.q) query.search = filters.q;
+      if (filters.city) query.city = filters.city;
+      if (filters.category) query.category = filters.category;
+      const response = await api('providers/public', { query });
+      setItems(unwrapItems(response));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { load(); }, []);
+
+  const handleNearby = () => {
+    if (!navigator.geolocation) {
+      setNearbyNotice('Geolocation isn’t available in this browser. Use the city filter instead.');
+      return;
+    }
+    setNearbyNotice('Requesting your location so we can suggest nearby providers.');
+    navigator.geolocation.getCurrentPosition(async (position) => {
+      try {
+        const response = await api('providers/nearby', {
+          query: {
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            radiusKm: 25,
+            category: filters.category
+          }
+        });
+        setItems(unwrapItems(response));
+        setNearbyNotice('Showing providers near your location.');
+      } catch (err) {
+        setNearbyNotice(err.message || 'Unable to load nearby providers.');
+      }
+    }, () => {
+      setNearbyNotice('Location access was denied. Please choose a city or search manually.');
+    }, { enableHighAccuracy: true, timeout: 10000 });
+  };
+
+  return <section className="wrap section directory">
+    <div className="section-heading">
+      <div>
+        <span className="eyebrow">SERVICE PROVIDERS</span>
+        <h1>Discover trusted local professionals</h1>
+        <p className="muted">Find verified providers in Karnataka by service, city and availability.</p>
+      </div>
+      <button className="btn btn-small" type="button" onClick={handleNearby}>Use my location</button>
+    </div>
+
+    <form className="search-panel" onSubmit={(event) => { event.preventDefault(); load(); }}>
+      <label>Search<input value={filters.q} placeholder="Provider name or specialty" onChange={(e) => setFilters((prev) => ({ ...prev, q: e.target.value }))} /></label>
+      <label>City / locality<input value={filters.city} placeholder="e.g. Bengaluru" onChange={(e) => setFilters((prev) => ({ ...prev, city: e.target.value }))} /></label>
+      <label>Category<input value={filters.category} placeholder="Carpenter, plumber, electrician" onChange={(e) => setFilters((prev) => ({ ...prev, category: e.target.value }))} /></label>
+      <button className="btn" type="submit">Search</button>
+    </form>
+
+    {nearbyNotice && <div className="notice" role="status">{nearbyNotice}</div>}
+    {error && <div className="notice error">{error}</div>}
+
+    {loading ? <div className="empty-state">Loading provider profiles…</div> : items.length ? <div className="listing-grid">{items.map((provider) => {
+      const image = provider.profileImage?.url || provider.photoUrl || provider.userId?.photoUrl || 'https://images.unsplash.com/photo-1507679799987-c73779587ccf?auto=format&fit=crop&w=900&q=80';
+      const providerName = provider.displayName || provider.userId?.name || 'Verified provider';
+      const city = provider.userId?.location || provider.location || 'Karnataka';
+      const specialties = Array.isArray(provider.skills) && provider.skills.length ? provider.skills.slice(0, 3).join(', ') : 'General services';
+      return <article className="listing-card" key={provider.id || provider._id}>
+        <div className="listing-image-wrap"><img src={image} alt={providerName} className="listing-image" /></div>
+        <div className="listing-copy">
+          <span className="eyebrow">{provider.verificationStatus === 'verified' ? 'VERIFIED PROVIDER' : 'LOCAL PROVIDER'}</span>
+          <h3>{providerName}</h3>
+          <p className="muted">⌖ {city}</p>
+          <p>{specialties}</p>
+          <div className="listing-meta-row">
+            <span>{provider.experienceYears ? `${provider.experienceYears} years experience` : 'Experienced local service'}</span>
+            {provider.distanceKm ? <span>{provider.distanceKm}</span> : null}
+          </div>
+          <Link className="btn btn-small btn-full" to={`/providers/${provider.id || provider._id}`}>View profile</Link>
+        </div>
+      </article>;
+    })}</div> : <div className="empty-state"><span>⌕</span><h3>No verified providers found</h3><p>Try another service category or location filter.</p></div>}
+  </section>;
+}
+
+export function ProviderDetail() {
+  const { id } = useParams();
+  const [provider, setProvider] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    api(`providers/${id}`)
+      .then((data) => { if (active) setProvider(data); })
+      .catch((err) => { if (active) setError(err.message); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [id]);
+
+  if (loading) return <section className="wrap section"><p>Loading provider profile…</p></section>;
+  if (error || !provider) return <section className="wrap section"><div className="notice error">{error || 'Provider profile not found.'}</div><Link to="/providers" className="text-link">← Back to providers</Link></section>;
+
+  const profileImage = provider.profileImage?.url || provider.photoUrl || provider.userId?.photoUrl || 'https://images.unsplash.com/photo-1507679799987-c73779587ccf?auto=format&fit=crop&w=900&q=80';
+  const providerName = provider.displayName || provider.userId?.name || 'Verified provider';
+
+  return <section className="wrap section detail-page">
+    <Link to="/providers" className="text-link">← Back to providers</Link>
+    <div className="detail-layout">
+      <article className="detail-content">
+        <img className="detail-image" src={profileImage} alt={providerName} />
+        <span className="eyebrow">{provider.verificationStatus === 'verified' ? 'VERIFIED PROVIDER' : 'LOCAL PROVIDER'}</span>
+        <h1>{providerName}</h1>
+        <p className="detail-location">⌖ {provider.userId?.location || provider.location || 'Karnataka'}</p>
+        <p className="detail-description">{provider.bio || 'Local service provider offering quality work and dependable support.'}</p>
+        <h3>Services</h3>
+        <ul>{(provider.skills || []).length ? provider.skills.map((skill) => <li key={skill}>{skill}</li>) : <li>General local services</li>}</ul>
+        {provider.services?.length ? <div><h3>Portfolio</h3><ul>{provider.services.map((service) => <li key={service.id}>{service.title} · {service.category}</li>)}</ul></div> : null}
+      </article>
+      <aside className="detail-enquiry-card">
+        <span className="eyebrow">PROFILE SUMMARY</span>
+        <strong className="detail-price">{provider.experienceYears ? `${provider.experienceYears} years experience` : 'Experienced local provider'}</strong>
+        <p className="muted">Verified and available for service requests in {provider.userId?.location || 'Karnataka'}.</p>
+        <div className="action-row compact">
+          <Link className="btn" to={sessionStorage.getItem('nuk_access_token') ? '/enquiries' : '/login'}>Request service</Link>
+          <Link className="btn btn-outline" to={sessionStorage.getItem('nuk_access_token') ? '/enquiries' : '/login'}>Chat</Link>
+        </div>
+      </aside>
+    </div>
+  </section>;
+}
